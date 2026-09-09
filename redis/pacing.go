@@ -16,8 +16,8 @@ type Pace struct {
 	client *goredis.Client
 }
 
-// Pacing is the limiter over a connection.
-func Pacing(client *goredis.Client) *Pace { return &Pace{client: client} }
+// NewPace is the limiter over a connection.
+func NewPace(client *goredis.Client) *Pace { return &Pace{client: client} }
 
 // Turn reserves the next turn under an allowance and says how long until it.
 //

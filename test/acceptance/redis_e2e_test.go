@@ -35,30 +35,30 @@ var (
 // approximated.
 var noon = time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 
-// shared is a Redis this test owns, and the two things a program keeps in one.
-func shared(t *testing.T) (*miniredis.Miniredis, *redis.Store, *redis.Pace) {
+// onMiniredis is a Redis this test owns, and the two things a program keeps in one.
+func onMiniredis(t *testing.T) (*miniredis.Miniredis, *redis.Store, *redis.Pace) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	server.SetTime(noon)
 	client := goredis.NewClient(&goredis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return server, redis.Keeping(client), redis.Pacing(client)
+	return server, redis.NewStore(client), redis.NewPace(client)
 }
 
-func clocked(server *miniredis.Miniredis, past time.Duration) {
+func advanceClock(server *miniredis.Miniredis, past time.Duration) {
 	server.SetTime(noon.Add(past))
 }
 
-func kept(t *testing.T, store *redis.Store, key string) cache.Cached {
+func readBack(t *testing.T, store *redis.Store, key string) cache.Cached {
 	t.Helper()
-	held, err := store.Get(context.Background(), key)
+	cached, err := store.Get(context.Background(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return held
+	return cached
 }
 
-func keeping(t *testing.T, store *redis.Store, filing cache.Entry) {
+func putEntry(t *testing.T, store *redis.Store, filing cache.Entry) {
 	t.Helper()
 	if err := store.Put(context.Background(), filing); err != nil {
 		t.Fatal(err)
@@ -66,20 +66,20 @@ func keeping(t *testing.T, store *redis.Store, filing cache.Entry) {
 }
 
 func TestAValueIsKeptUntilItStopsBeingWorthKeeping(t *testing.T) {
-	server, store, _ := shared(t)
+	server, store, _ := onMiniredis(t)
 
-	keeping(t, store, cache.Entry{
+	putEntry(t, store, cache.Entry{
 		Key: "film:603", About: "tmdb:603", Entity: []byte(`{"said":"so"}`),
 		Fresh: 10 * time.Minute,
 	})
 
-	if held := kept(t, store, "film:603"); !held.Found || string(held.Entity) != `{"said":"so"}` {
-		t.Fatalf("expected the value back, got %+v", held)
+	if cached := readBack(t, store, "film:603"); !cached.Found || string(cached.Entity) != `{"said":"so"}` {
+		t.Fatalf("expected the value back, got %+v", cached)
 	}
 
 	server.FastForward(11 * time.Minute)
 
-	if gone := kept(t, store, "film:603"); gone.Found {
+	if gone := readBack(t, store, "film:603"); gone.Found {
 		t.Fatalf("expected the value to have stopped being worth keeping, got %+v", gone)
 	}
 }
@@ -87,10 +87,10 @@ func TestAValueIsKeptUntilItStopsBeingWorthKeeping(t *testing.T) {
 func TestAMissIsAnAnswerAndNotAFailure(t *testing.T) {
 	// The ordinary state of a key nobody has asked for yet: a store that
 	// failed on a miss would make every first request an error to handle.
-	_, store, _ := shared(t)
+	_, store, _ := onMiniredis(t)
 
-	if held := kept(t, store, "film:nobody-asked"); held.Found || len(held.Entity) != 0 {
-		t.Fatalf("expected nothing, got %+v", held)
+	if cached := readBack(t, store, "film:nobody-asked"); cached.Found || len(cached.Entity) != 0 {
+		t.Fatalf("expected nothing, got %+v", cached)
 	}
 }
 
@@ -98,14 +98,14 @@ func TestEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 	// What somebody asking for a thing to be looked up again means: not "drop
 	// these four keys" but "find out about this thing again". So what is kept
 	// says what it is about, whatever wrote it, and one call drops them all.
-	_, store, _ := shared(t)
+	_, store, _ := onMiniredis(t)
 	filings := []cache.Entry{
 		{Key: "tmdb:film:603", About: "tmdb:603", Entity: []byte(`{}`), Fresh: time.Hour},
 		{Key: "letterboxd:film:603", About: "tmdb:603", Entity: []byte(`<html>`), Fresh: time.Hour},
 		{Key: "tmdb:film:604", About: "tmdb:604", Entity: []byte(`{}`), Fresh: time.Hour},
 	}
 	for _, filing := range filings {
-		keeping(t, store, filing)
+		putEntry(t, store, filing)
 	}
 
 	if err := store.Invalidate(context.Background(), "tmdb:603"); err != nil {
@@ -113,11 +113,11 @@ func TestEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 	}
 
 	for _, filing := range filings[:2] {
-		if gone := kept(t, store, filing.Key); gone.Found {
+		if gone := readBack(t, store, filing.Key); gone.Found {
 			t.Fatalf("expected %q to have been forgotten", filing.Key)
 		}
 	}
-	if still := kept(t, store, filings[2].Key); !still.Found {
+	if still := readBack(t, store, filings[2].Key); !still.Found {
 		t.Fatal("expected what is kept about another subject to stay")
 	}
 }
@@ -126,7 +126,7 @@ func TestForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
 	// Somebody asking for a thing nobody has read yet to be read again is
 	// asking for something reasonable, and the answer is that there was
 	// nothing to drop.
-	_, store, _ := shared(t)
+	_, store, _ := onMiniredis(t)
 
 	if err := store.Invalidate(context.Background(), "tmdb:999"); err != nil {
 		t.Fatalf("expected forgetting nothing to be no failure, got %v", err)
@@ -134,25 +134,25 @@ func TestForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
 }
 
 func TestAFilingWithNoLifetimeIsRefusedRatherThanKeptForever(t *testing.T) {
-	_, store, _ := shared(t)
+	_, store, _ := onMiniredis(t)
 
 	err := store.Put(context.Background(), cache.Entry{Key: "film:603", Entity: []byte("x")})
 
 	if err == nil {
 		t.Fatal("expected a filing with no lifetime to be refused")
 	}
-	if held := kept(t, store, "film:603"); held.Found {
+	if cached := readBack(t, store, "film:603"); cached.Found {
 		t.Fatal("expected nothing kept")
 	}
 }
 
-// thrice is an allowance of three every three seconds: a spacing of one
+// threePerSecond is an allowance of three every three seconds: a spacing of one
 // second, and a burst of three.
-func thrice() rate.Allowance {
+func threePerSecond() rate.Allowance {
 	return rate.Allowance{Name: "a service", Most: 3, Every: 3 * time.Second}
 }
 
-func turned(t *testing.T, limiter *redis.Pace, allowance rate.Allowance) time.Duration {
+func timeOneTurn(t *testing.T, limiter *redis.Pace, allowance rate.Allowance) time.Duration {
 	t.Helper()
 	wait, err := limiter.Turn(context.Background(), allowance)
 	if err != nil {
@@ -162,10 +162,10 @@ func turned(t *testing.T, limiter *redis.Pace, allowance rate.Allowance) time.Du
 }
 
 func TestTheBurstAnAllowanceToleratesGoesAtOnce(t *testing.T) {
-	_, _, limiter := shared(t)
+	_, _, limiter := onMiniredis(t)
 
 	for turn := range 3 {
-		if wait := turned(t, limiter, thrice()); wait != 0 {
+		if wait := timeOneTurn(t, limiter, threePerSecond()); wait != 0 {
 			t.Fatalf("expected turn %d of the burst to go at once, waits %v", turn+1, wait)
 		}
 	}
@@ -175,13 +175,13 @@ func TestPastTheBurstEveryTurnIsSpaced(t *testing.T) {
 	// What "three every three seconds" means to whoever is being asked: the
 	// fourth waits a spacing and the fifth two, and nothing is exceeded and
 	// then apologised for.
-	_, _, limiter := shared(t)
+	_, _, limiter := onMiniredis(t)
 	for range 3 {
-		_ = turned(t, limiter, thrice())
+		_ = timeOneTurn(t, limiter, threePerSecond())
 	}
 
 	for turn, expected := range []time.Duration{time.Second, 2 * time.Second} {
-		if wait := turned(t, limiter, thrice()); wait != expected {
+		if wait := timeOneTurn(t, limiter, threePerSecond()); wait != expected {
 			t.Fatalf("expected turn %d past the burst to wait %v, waits %v",
 				turn+4, expected, wait)
 		}
@@ -191,32 +191,32 @@ func TestPastTheBurstEveryTurnIsSpaced(t *testing.T) {
 func TestASpentAllowanceComesBackOneTurnAtATime(t *testing.T) {
 	// Not a window that empties all at once, which is what keeps a burst from
 	// arriving on every boundary.
-	server, _, limiter := shared(t)
+	server, _, limiter := onMiniredis(t)
 	for range 4 {
-		_ = turned(t, limiter, thrice())
+		_ = timeOneTurn(t, limiter, threePerSecond())
 	}
 
-	clocked(server, 2*time.Second)
+	advanceClock(server, 2*time.Second)
 
-	if wait := turned(t, limiter, thrice()); wait != 0 {
+	if wait := timeOneTurn(t, limiter, threePerSecond()); wait != 0 {
 		t.Fatalf("expected the turn to have come round, waits %v", wait)
 	}
 }
 
 func TestTwoAllowancesAreCountedApart(t *testing.T) {
-	_, _, limiter := shared(t)
+	_, _, limiter := onMiniredis(t)
 	other := rate.Allowance{Name: "another service", Most: 3, Every: 3 * time.Second}
 	for range 4 {
-		_ = turned(t, limiter, thrice())
+		_ = timeOneTurn(t, limiter, threePerSecond())
 	}
 
-	if wait := turned(t, limiter, other); wait != 0 {
+	if wait := timeOneTurn(t, limiter, other); wait != 0 {
 		t.Fatalf("expected the other service's own allowance, waits %v", wait)
 	}
 }
 
 func TestAnUnstatedAllowanceIsRefusedRatherThanTreatedAsUnlimited(t *testing.T) {
-	_, _, limiter := shared(t)
+	_, _, limiter := onMiniredis(t)
 
 	_, err := limiter.Turn(context.Background(), rate.Allowance{Name: "a service"})
 

@@ -16,10 +16,10 @@ type Store struct {
 	client *goredis.Client
 }
 
-// Keeping is the store over a connection.
-func Keeping(client *goredis.Client) *Store { return &Store{client: client} }
+// NewStore is the store over a connection.
+func NewStore(client *goredis.Client) *Store { return &Store{client: client} }
 
-// Kept is what is held under a key, and whether anything is.
+// Get is what is held under a key, and whether anything is.
 //
 // A key that has expired and a key that was never written are one answer, which
 // is the only thing a cache can say about either: what it holds is what is
@@ -47,7 +47,7 @@ func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 		return Fault{Doing: "keeping " + entry.Key, Err: cache.ErrUnworthy}
 	}
 	err := file.Run(ctx, store.client,
-		[]string{entry.Key, about(entry.About)},
+		[]string{entry.Key, subjectKey(entry.About)},
 		entry.Entity,
 		entry.Fresh.Milliseconds(),
 	).Err()
@@ -57,16 +57,16 @@ func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 	return nil
 }
 
-// Forget drops everything kept about one subject, whatever wrote it.
+// Invalidate drops every entry about one subject, whatever wrote it.
 func (store *Store) Invalidate(ctx context.Context, subject string) error {
-	if err := drop.Run(ctx, store.client, []string{about(subject)}).Err(); err != nil {
+	if err := drop.Run(ctx, store.client, []string{subjectKey(subject)}).Err(); err != nil {
 		return Fault{Doing: "forgetting " + subject, Err: err}
 	}
 	return nil
 }
 
-// about is where the keys of what is known about one subject are listed.
-func about(subject string) string { return "about:" + subject }
+// subjectKey is where the keys of what is known subjectKey one subject are listed.
+func subjectKey(subject string) string { return "about:" + subject }
 
 // file keeps the value and lists it under its subject.
 //
@@ -94,10 +94,10 @@ return 1
 // showed half of yesterday's answers and half of today's would be the worst of
 // both.
 var drop = goredis.NewScript(`
-local kept = redis.call('SMEMBERS', KEYS[1])
-for at = 1, #kept do
-  redis.call('DEL', kept[at])
+local members = redis.call('SMEMBERS', KEYS[1])
+for at = 1, #members do
+  redis.call('DEL', members[at])
 end
 redis.call('DEL', KEYS[1])
-return #kept
+return #members
 `)

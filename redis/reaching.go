@@ -45,7 +45,7 @@ func (fault Fault) Error() string {
 
 func (fault Fault) Unwrap() error { return fault.Err }
 
-// Reaching is a connection for as long as the scope holds it.
+// Connect is a connection for as long as the scope holds it.
 //
 // Scoped because a client owns connections it has to give back, which is the
 // division sql.Open makes for the same reason: a handle with a Close is a
@@ -56,7 +56,7 @@ func (fault Fault) Unwrap() error { return fault.Err }
 // timeouts and TLS are how a deployment reaches a server and are not a
 // property of what is kept there -- the same division web.Dial makes by taking
 // an http.Client.
-func Reaching[R any](
+func Connect[R any](
 	scope effect.Scope,
 	options *goredis.Options,
 ) effect.Effect[R, Fault, *goredis.Client] {
@@ -74,9 +74,9 @@ func Reaching[R any](
 		func(err error) Fault { return Fault{Doing: "connecting", Err: err} },
 	).Named("reaching redis")
 
-	return scope.AcquireRelease(acquire, disconnecting[R])
+	return scope.AcquireRelease(acquire, disconnect[R])
 }
 
-func disconnecting[R any](client *goredis.Client) effect.Effect[R, effect.Never, effect.Unit] {
-	return effect.Release[R](func(context.Context) error { return client.Close() })
+func disconnect[R any](client *goredis.Client) effect.Effect[R, effect.Never, effect.Unit] {
+	return effect.AddFinalizer[R](func(context.Context) error { return client.Close() })
 }
