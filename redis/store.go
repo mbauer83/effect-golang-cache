@@ -1,0 +1,103 @@
+package redis
+
+// Where a program keeps what it has already found out.
+
+import (
+	"context"
+	"errors"
+
+	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/mbauer83/effect-golang/effect/cache"
+)
+
+// Store keeps values where every instance of a program can see them.
+type Store struct {
+	client *goredis.Client
+}
+
+// Keeping is the store over a connection.
+func Keeping(client *goredis.Client) *Store { return &Store{client: client} }
+
+// Kept is what is held under a key, and whether anything is.
+//
+// A key that has expired and a key that was never written are one answer, which
+// is the only thing a cache can say about either: what it holds is what is
+// still worth having.
+func (store *Store) Kept(ctx context.Context, key string) (cache.Kept, error) {
+	entity, err := store.client.Get(ctx, key).Bytes()
+	if errors.Is(err, goredis.Nil) {
+		return cache.Kept{}, nil
+	}
+	if err != nil {
+		return cache.Kept{}, Fault{Doing: "reading " + key, Err: err}
+	}
+	return cache.Kept{Entity: entity, Found: true}, nil
+}
+
+// Keep files a value for as long as it is worth keeping, and notes it among
+// what is known about its subject.
+//
+// One script, so there is no moment at which a value is kept and not listed
+// under what it is about. A listing that missed it would be a value nobody
+// could ask to have dropped, and whoever asked would keep being served
+// yesterday's answer however often they asked.
+func (store *Store) Keep(ctx context.Context, filing cache.Filing) error {
+	if !filing.IsWorthKeeping() {
+		return Fault{Doing: "keeping " + filing.Key, Err: cache.ErrUnworthy}
+	}
+	err := file.Run(ctx, store.client,
+		[]string{filing.Key, about(filing.About)},
+		filing.Entity,
+		filing.Fresh.Milliseconds(),
+	).Err()
+	if err != nil {
+		return Fault{Doing: "keeping " + filing.Key, Err: err}
+	}
+	return nil
+}
+
+// Forget drops everything kept about one subject, whatever wrote it.
+func (store *Store) Forget(ctx context.Context, subject string) error {
+	if err := drop.Run(ctx, store.client, []string{about(subject)}).Err(); err != nil {
+		return Fault{Doing: "forgetting " + subject, Err: err}
+	}
+	return nil
+}
+
+// about is where the keys of what is known about one subject are listed.
+func about(subject string) string { return "about:" + subject }
+
+// file keeps the value and lists it under its subject.
+//
+// The listing outlives the value on purpose: a member naming a key that has
+// already expired costs one deletion of nothing, and the alternative -- a
+// listing that expired first -- would leave values nothing could find to drop.
+//
+// A subject of "" is not listed. A value nothing will ever ask to have dropped
+// needs no listing, and an empty subject would otherwise collect every such
+// value in one growing set.
+var file = goredis.NewScript(`
+local fresh = tonumber(ARGV[2])
+redis.call('SET', KEYS[1], ARGV[1], 'PX', fresh)
+if KEYS[2] ~= 'about:' then
+  redis.call('SADD', KEYS[2], KEYS[1])
+  redis.call('PEXPIRE', KEYS[2], fresh * 2)
+end
+return 1
+`)
+
+// drop deletes every value listed about one subject, and the listing.
+//
+// In one script rather than a read followed by deletions, so a value written
+// while this was running is either kept whole or dropped whole: a page that
+// showed half of yesterday's answers and half of today's would be the worst of
+// both.
+var drop = goredis.NewScript(`
+local kept = redis.call('SMEMBERS', KEYS[1])
+for at = 1, #kept do
+  redis.call('DEL', kept[at])
+end
+redis.call('DEL', KEYS[1])
+return #kept
+`)
