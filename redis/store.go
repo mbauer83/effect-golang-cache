@@ -24,15 +24,15 @@ func Keeping(client *goredis.Client) *Store { return &Store{client: client} }
 // A key that has expired and a key that was never written are one answer, which
 // is the only thing a cache can say about either: what it holds is what is
 // still worth having.
-func (store *Store) Kept(ctx context.Context, key string) (cache.Kept, error) {
+func (store *Store) Get(ctx context.Context, key string) (cache.Cached, error) {
 	entity, err := store.client.Get(ctx, key).Bytes()
 	if errors.Is(err, goredis.Nil) {
-		return cache.Kept{}, nil
+		return cache.Cached{}, nil
 	}
 	if err != nil {
-		return cache.Kept{}, Fault{Doing: "reading " + key, Err: err}
+		return cache.Cached{}, Fault{Doing: "reading " + key, Err: err}
 	}
-	return cache.Kept{Entity: entity, Found: true}, nil
+	return cache.Cached{Entity: entity, Found: true}, nil
 }
 
 // Keep files a value for as long as it is worth keeping, and notes it among
@@ -42,23 +42,23 @@ func (store *Store) Kept(ctx context.Context, key string) (cache.Kept, error) {
 // under what it is about. A listing that missed it would be a value nobody
 // could ask to have dropped, and whoever asked would keep being served
 // yesterday's answer however often they asked.
-func (store *Store) Keep(ctx context.Context, filing cache.Filing) error {
-	if !filing.IsWorthKeeping() {
-		return Fault{Doing: "keeping " + filing.Key, Err: cache.ErrUnworthy}
+func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
+	if !entry.IsStorable() {
+		return Fault{Doing: "keeping " + entry.Key, Err: cache.ErrUnworthy}
 	}
 	err := file.Run(ctx, store.client,
-		[]string{filing.Key, about(filing.About)},
-		filing.Entity,
-		filing.Fresh.Milliseconds(),
+		[]string{entry.Key, about(entry.About)},
+		entry.Entity,
+		entry.Fresh.Milliseconds(),
 	).Err()
 	if err != nil {
-		return Fault{Doing: "keeping " + filing.Key, Err: err}
+		return Fault{Doing: "keeping " + entry.Key, Err: err}
 	}
 	return nil
 }
 
 // Forget drops everything kept about one subject, whatever wrote it.
-func (store *Store) Forget(ctx context.Context, subject string) error {
+func (store *Store) Invalidate(ctx context.Context, subject string) error {
 	if err := drop.Run(ctx, store.client, []string{about(subject)}).Err(); err != nil {
 		return Fault{Doing: "forgetting " + subject, Err: err}
 	}

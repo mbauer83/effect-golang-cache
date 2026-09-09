@@ -62,14 +62,14 @@ func TestOnARealServerAValueIsKeptAndReadBack(t *testing.T) {
 	store, _, named := really(t)
 	within := context.Background()
 
-	if err := store.Keep(within, cache.Filing{
+	if err := store.Put(within, cache.Entry{
 		Key: named + ":one", About: named, Entity: []byte(`{"said":"so"}`),
 		Fresh: time.Minute,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	held, err := store.Kept(within, named+":one")
+	held, err := store.Get(within, named+":one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestOnARealServerAValueIsKeptAndReadBack(t *testing.T) {
 func TestOnARealServerAMissIsAnAnswer(t *testing.T) {
 	store, _, named := really(t)
 
-	held, err := store.Kept(context.Background(), named+":nobody-asked")
+	held, err := store.Get(context.Background(), named+":nobody-asked")
 
 	if err != nil {
 		t.Fatalf("expected a miss to be an answer, got %v", err)
@@ -98,19 +98,19 @@ func TestOnARealServerEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 	store, _, named := really(t)
 	within := context.Background()
 	for _, key := range []string{named + ":one", named + ":two"} {
-		if err := store.Keep(within, cache.Filing{
+		if err := store.Put(within, cache.Entry{
 			Key: key, About: named, Entity: []byte(`{}`), Fresh: time.Minute,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := store.Forget(within, named); err != nil {
+	if err := store.Invalidate(within, named); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, key := range []string{named + ":one", named + ":two"} {
-		held, err := store.Kept(within, key)
+		held, err := store.Get(within, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +123,7 @@ func TestOnARealServerEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 func TestOnARealServerForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
 	store, _, named := really(t)
 
-	if err := store.Forget(context.Background(), named+":nothing-here"); err != nil {
+	if err := store.Invalidate(context.Background(), named+":nothing-here"); err != nil {
 		t.Fatalf("expected forgetting nothing to be no failure, got %v", err)
 	}
 }

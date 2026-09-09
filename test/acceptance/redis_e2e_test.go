@@ -49,18 +49,18 @@ func clocked(server *miniredis.Miniredis, past time.Duration) {
 	server.SetTime(noon.Add(past))
 }
 
-func kept(t *testing.T, store *redis.Store, key string) cache.Kept {
+func kept(t *testing.T, store *redis.Store, key string) cache.Cached {
 	t.Helper()
-	held, err := store.Kept(context.Background(), key)
+	held, err := store.Get(context.Background(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return held
 }
 
-func keeping(t *testing.T, store *redis.Store, filing cache.Filing) {
+func keeping(t *testing.T, store *redis.Store, filing cache.Entry) {
 	t.Helper()
-	if err := store.Keep(context.Background(), filing); err != nil {
+	if err := store.Put(context.Background(), filing); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,7 +68,7 @@ func keeping(t *testing.T, store *redis.Store, filing cache.Filing) {
 func TestAValueIsKeptUntilItStopsBeingWorthKeeping(t *testing.T) {
 	server, store, _ := shared(t)
 
-	keeping(t, store, cache.Filing{
+	keeping(t, store, cache.Entry{
 		Key: "film:603", About: "tmdb:603", Entity: []byte(`{"said":"so"}`),
 		Fresh: 10 * time.Minute,
 	})
@@ -99,7 +99,7 @@ func TestEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 	// these four keys" but "find out about this thing again". So what is kept
 	// says what it is about, whatever wrote it, and one call drops them all.
 	_, store, _ := shared(t)
-	filings := []cache.Filing{
+	filings := []cache.Entry{
 		{Key: "tmdb:film:603", About: "tmdb:603", Entity: []byte(`{}`), Fresh: time.Hour},
 		{Key: "letterboxd:film:603", About: "tmdb:603", Entity: []byte(`<html>`), Fresh: time.Hour},
 		{Key: "tmdb:film:604", About: "tmdb:604", Entity: []byte(`{}`), Fresh: time.Hour},
@@ -108,7 +108,7 @@ func TestEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 		keeping(t, store, filing)
 	}
 
-	if err := store.Forget(context.Background(), "tmdb:603"); err != nil {
+	if err := store.Invalidate(context.Background(), "tmdb:603"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -128,7 +128,7 @@ func TestForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
 	// nothing to drop.
 	_, store, _ := shared(t)
 
-	if err := store.Forget(context.Background(), "tmdb:999"); err != nil {
+	if err := store.Invalidate(context.Background(), "tmdb:999"); err != nil {
 		t.Fatalf("expected forgetting nothing to be no failure, got %v", err)
 	}
 }
@@ -136,7 +136,7 @@ func TestForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
 func TestAFilingWithNoLifetimeIsRefusedRatherThanKeptForever(t *testing.T) {
 	_, store, _ := shared(t)
 
-	err := store.Keep(context.Background(), cache.Filing{Key: "film:603", Entity: []byte("x")})
+	err := store.Put(context.Background(), cache.Entry{Key: "film:603", Entity: []byte("x")})
 
 	if err == nil {
 		t.Fatal("expected a filing with no lifetime to be refused")
