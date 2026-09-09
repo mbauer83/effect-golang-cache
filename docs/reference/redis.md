@@ -69,6 +69,20 @@ The clock inside that script is the server's own, read with `TIME`. One count
 shared by four containers needs one clock; containers whose clocks differ by a
 second would each believe a different state.
 
+## How the scripts are established
+
+Twice, because one way is not enough. The suite runs them against
+[miniredis](https://github.com/alicebob/miniredis), which speaks the protocol
+and runs the Lua on gopher-lua and -- the reason it is worth having -- lets a
+test hold the clock, so "the fourth turn waits exactly one second" is an
+equality rather than a tolerance.
+
+It is not Redis, though, so the cases that need no control of the clock run
+again against a real server in CI, gated on `EFFECT_GOLANG_REDIS_URL`. What
+only that can say is that SMEMBERS of a set that was never created, DEL of keys
+already gone, an expiry in milliseconds and the server's own clock behave the
+way the scripts assume.
+
 ## Valkey
 
 The same protocol and the same scripting, served by this adapter unchanged.
