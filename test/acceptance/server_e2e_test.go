@@ -138,7 +138,7 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 	within := context.Background()
 
 	for turn := range 3 {
-		wait, err := pace.Turn(within, allowance)
+		wait, err := pace.Turn(within, allowance, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,14 +147,14 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 		}
 	}
 
-	fourth, err := pace.Turn(within, allowance)
+	fourth, err := pace.Turn(within, allowance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fourth < 900*time.Millisecond || fourth > time.Second {
 		t.Fatalf("expected the fourth turn to wait about a second, waits %v", fourth)
 	}
-	fifth, err := pace.Turn(within, allowance)
+	fifth, err := pace.Turn(within, allowance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 func TestOnARealServerAnUnstatedAllowanceIsRefused(t *testing.T) {
 	_, pace, prefix := onARealServer(t)
 
-	_, err := pace.Turn(context.Background(), rate.Allowance{Name: prefix})
+	_, err := pace.Turn(context.Background(), rate.Allowance{Name: prefix}, 0)
 
 	if err == nil {
 		t.Fatal("expected an unstated allowance to be refused")

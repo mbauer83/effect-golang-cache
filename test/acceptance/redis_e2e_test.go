@@ -9,6 +9,7 @@ package acceptance
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -154,7 +155,7 @@ func threePerSecond() rate.Allowance {
 
 func timeOneTurn(t *testing.T, limiter *redis.Pace, allowance rate.Allowance) time.Duration {
 	t.Helper()
-	wait, err := limiter.Turn(context.Background(), allowance)
+	wait, err := limiter.Turn(context.Background(), allowance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,9 +219,69 @@ func TestTwoAllowancesAreCountedApart(t *testing.T) {
 func TestAnUnstatedAllowanceIsRefusedRatherThanTreatedAsUnlimited(t *testing.T) {
 	_, _, limiter := onMiniredis(t)
 
-	_, err := limiter.Turn(context.Background(), rate.Allowance{Name: "a service"})
+	_, err := limiter.Turn(context.Background(), rate.Allowance{Name: "a service"}, 0)
 
 	if err == nil {
 		t.Fatal("expected an unstated allowance to be refused")
+	}
+}
+
+func TestATurnRefusedForBeingTooFarOffLeavesTheSharedCountAlone(t *testing.T) {
+	// The same guarantee the in-process limiter gives, proved against the
+	// count four containers actually share -- because this is the one that
+	// runs in production, and a script that claimed the moment before
+	// checking the ceiling would burn a third party's allowance on requests
+	// nobody made.
+	_, _, limiter := onMiniredis(t)
+	for range 3 {
+		_ = timeOneTurn(t, limiter, threePerSecond())
+	}
+
+	wait, err := limiter.Turn(context.Background(), threePerSecond(), time.Millisecond)
+
+	if !errors.Is(err, rate.ErrQueued) {
+		t.Fatalf("expected the turn refused as queued, got %v", err)
+	}
+	if wait != time.Second {
+		t.Fatalf("expected the queue reported as one spacing, got %v", wait)
+	}
+	if waited := timeOneTurn(t, limiter, threePerSecond()); waited != time.Second {
+		t.Fatalf("the refused turn spent an allowance: a patient caller now waits %v "+
+			"rather than the one spacing it should", waited)
+	}
+}
+
+func TestSpeculativeReadingCannotStarveTheReadingSomebodyIsWaitingOn(t *testing.T) {
+	// Both state the same allowance, counted once for every instance. They
+	// differ only in how long each will queue, and that is the whole of the
+	// protection: speculative work is served from whatever room is free and
+	// yields the moment there is a queue.
+	_, _, limiter := onMiniredis(t)
+	const speculative = 10 * time.Millisecond
+
+	for range 3 {
+		if _, err := limiter.Turn(context.Background(), threePerSecond(), speculative); err != nil {
+			t.Fatalf("expected the free burst served, got %v", err)
+		}
+	}
+	if _, err := limiter.Turn(context.Background(), threePerSecond(), speculative); !errors.Is(err, rate.ErrQueued) {
+		t.Fatalf("expected speculative work to yield past the burst, got %v", err)
+	}
+	if waited := timeOneTurn(t, limiter, threePerSecond()); waited != time.Second {
+		t.Fatalf("expected the interactive turn undelayed at one spacing, got %v", waited)
+	}
+}
+
+// Zero is no ceiling, which is what rate.Terms already says about how long a
+// caller will queue. Stated as a test because the script is told the ceiling
+// as a number and a zero there would mean the opposite.
+func TestAZeroCeilingQueuesHoweverLongTheTurnIs(t *testing.T) {
+	_, _, limiter := onMiniredis(t)
+	for range 3 {
+		_ = timeOneTurn(t, limiter, threePerSecond())
+	}
+
+	if _, err := limiter.Turn(context.Background(), threePerSecond(), 0); err != nil {
+		t.Fatalf("expected a zero ceiling to be no ceiling, got %v", err)
 	}
 }
