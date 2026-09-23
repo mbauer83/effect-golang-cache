@@ -77,7 +77,7 @@ func ceilingOf(longest time.Duration) int64 {
 	return longest.Milliseconds()
 }
 
-var errUnreadableTurn = errors.New("the pacing script answered with something other than a wait and whether it reserved")
+var errUnreadableTurn = errors.New("the limiter script answered with something other than a wait and whether it reserved")
 
 // reserveScript is the generic cell rate algorithm, which is what a rate limit that
 // must not be exceeded looks like written down.

@@ -41,7 +41,7 @@ timeouts and TLS are how a deployment reaches a server and are not a property
 of what is kept there, which is the division `web.Dial` makes by taking an
 `http.Client`.
 
-## Two scripts, because three round trips interleave
+## One script per operation, because round trips interleave
 
 Reading, deciding and writing cannot be three commands when another instance is
 doing the same thing between them. So each operation that has to be atomic is
