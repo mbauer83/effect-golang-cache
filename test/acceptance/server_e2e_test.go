@@ -27,12 +27,12 @@ import (
 	"github.com/mbauer83/effect-golang/effect/rate"
 )
 
-// onARealServer is a real server, and the two things a program keeps in one.
+// connectRealServer is a real server, and the two things a program keeps in one.
 //
 // The keys are prefix for the test that made them and dropped afterwards, so
 // two runs against one server do not share state and a failed run leaves
 // nothing behind.
-func onARealServer(t *testing.T) (*redis.Store, *redis.Pace, string) {
+func connectRealServer(t *testing.T) (*redis.Store, *redis.Limiter, string) {
 	t.Helper()
 	address := os.Getenv("EFFECT_GOLANG_REDIS_URL")
 	if address == "" {
@@ -55,39 +55,39 @@ func onARealServer(t *testing.T) (*redis.Store, *redis.Pace, string) {
 		_ = client.Del(context.Background(),
 			prefix+":one", prefix+":two", "about:"+prefix, "pace:"+prefix).Err()
 	})
-	return redis.NewStore(client), redis.NewPace(client), prefix
+	return redis.NewStore(client), redis.NewLimiter(client), prefix
 }
 
 func TestOnARealServerAValueIsKeptAndReadBack(t *testing.T) {
-	store, _, prefix := onARealServer(t)
-	within := context.Background()
+	store, _, prefix := connectRealServer(t)
+	ctx := context.Background()
 
-	if err := store.Put(within, cache.Entry{
+	if err := store.Put(ctx, cache.Entry{
 		Key: prefix + ":one", About: prefix, Entity: []byte(`{"said":"so"}`),
 		Fresh: time.Minute,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	cached, err := store.Get(within, prefix+":one")
+	lookup, err := store.Get(ctx, prefix+":one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cached.Found || string(cached.Entity) != `{"said":"so"}` {
-		t.Fatalf("expected the value back, got %+v", cached)
+	if !lookup.Found || string(lookup.Entity) != `{"said":"so"}` {
+		t.Fatalf("expected the value back, got %+v", lookup)
 	}
 }
 
 func TestOnARealServerAMissIsAnAnswer(t *testing.T) {
-	store, _, prefix := onARealServer(t)
+	store, _, prefix := connectRealServer(t)
 
-	cached, err := store.Get(context.Background(), prefix+":nobody-asked")
+	lookup, err := store.Get(context.Background(), prefix+":nobody-asked")
 
 	if err != nil {
 		t.Fatalf("expected a miss to be an answer, got %v", err)
 	}
-	if cached.Found {
-		t.Fatalf("expected nothing, got %+v", cached)
+	if lookup.Found {
+		t.Fatalf("expected nothing, got %+v", lookup)
 	}
 }
 
@@ -95,33 +95,33 @@ func TestOnARealServerEverythingAboutOneSubjectIsForgottenAtOnce(t *testing.T) {
 	// The script reads a set and deletes its members. Whether SMEMBERS of a
 	// set that has expired, and DEL of keys that are already gone, behave the
 	// way the script assumes is a question about the server.
-	store, _, prefix := onARealServer(t)
-	within := context.Background()
+	store, _, prefix := connectRealServer(t)
+	ctx := context.Background()
 	for _, key := range []string{prefix + ":one", prefix + ":two"} {
-		if err := store.Put(within, cache.Entry{
+		if err := store.Put(ctx, cache.Entry{
 			Key: key, About: prefix, Entity: []byte(`{}`), Fresh: time.Minute,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := store.Invalidate(within, prefix); err != nil {
+	if err := store.Invalidate(ctx, prefix); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, key := range []string{prefix + ":one", prefix + ":two"} {
-		cached, err := store.Get(within, key)
+		lookup, err := store.Get(ctx, key)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cached.Found {
+		if lookup.Found {
 			t.Fatalf("expected %q to have been forgotten", key)
 		}
 	}
 }
 
 func TestOnARealServerForgettingWhatWasNeverKeptIsNotAFailure(t *testing.T) {
-	store, _, prefix := onARealServer(t)
+	store, _, prefix := connectRealServer(t)
 
 	if err := store.Invalidate(context.Background(), prefix+":nothing-here"); err != nil {
 		t.Fatalf("expected forgetting nothing to be no failure, got %v", err)
@@ -133,12 +133,12 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 	// three seconds means three at once and then one a second. Asserted as a
 	// bound rather than an equality, because the clock here is real -- which
 	// is exactly why the equality is asserted against the fake instead.
-	_, pace, prefix := onARealServer(t)
+	_, limiter, prefix := connectRealServer(t)
 	allowance := rate.Allowance{Name: prefix, Most: 3, Every: 3 * time.Second}
-	within := context.Background()
+	ctx := context.Background()
 
 	for turn := range 3 {
-		wait, err := pace.Turn(within, allowance, 0)
+		wait, err := limiter.Turn(ctx, allowance, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,14 +147,14 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 		}
 	}
 
-	fourth, err := pace.Turn(within, allowance, 0)
+	fourth, err := limiter.Turn(ctx, allowance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fourth < 900*time.Millisecond || fourth > time.Second {
 		t.Fatalf("expected the fourth turn to wait about a second, waits %v", fourth)
 	}
-	fifth, err := pace.Turn(within, allowance, 0)
+	fifth, err := limiter.Turn(ctx, allowance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,9 +165,9 @@ func TestOnARealServerTheBurstGoesAtOnceAndTheRestIsSpaced(t *testing.T) {
 }
 
 func TestOnARealServerAnUnstatedAllowanceIsRefused(t *testing.T) {
-	_, pace, prefix := onARealServer(t)
+	_, limiter, prefix := connectRealServer(t)
 
-	_, err := pace.Turn(context.Background(), rate.Allowance{Name: prefix}, 0)
+	_, err := limiter.Turn(context.Background(), rate.Allowance{Name: prefix}, 0)
 
 	if err == nil {
 		t.Fatal("expected an unstated allowance to be refused")

@@ -30,12 +30,12 @@ func (store *Store) Get(ctx context.Context, key string) (cache.Lookup, error) {
 		return cache.Lookup{}, nil
 	}
 	if err != nil {
-		return cache.Lookup{}, Fault{Doing: "reading " + key, Err: err}
+		return cache.Lookup{}, Fault{Op: "reading " + key, Err: err}
 	}
 	return cache.Lookup{Entity: entity, Found: true}, nil
 }
 
-// Keep files a value for as long as it is worth keeping, and notes it among
+// Put stores a value for as long as it is worth keeping, and notes it among
 // what is known about its subject.
 //
 // One script, so there is no moment at which a value is kept and not listed
@@ -44,31 +44,31 @@ func (store *Store) Get(ctx context.Context, key string) (cache.Lookup, error) {
 // yesterday's answer however often they asked.
 func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 	if !entry.IsStorable() {
-		return Fault{Doing: "keeping " + entry.Key, Err: cache.ErrUnworthy}
+		return Fault{Op: "keeping " + entry.Key, Err: cache.ErrUnworthy}
 	}
-	err := file.Run(ctx, store.client,
+	err := putScript.Run(ctx, store.client,
 		[]string{entry.Key, subjectKey(entry.About)},
 		entry.Entity,
 		entry.Fresh.Milliseconds(),
 	).Err()
 	if err != nil {
-		return Fault{Doing: "keeping " + entry.Key, Err: err}
+		return Fault{Op: "keeping " + entry.Key, Err: err}
 	}
 	return nil
 }
 
 // Invalidate drops every entry about one subject, whatever wrote it.
 func (store *Store) Invalidate(ctx context.Context, subject string) error {
-	if err := drop.Run(ctx, store.client, []string{subjectKey(subject)}).Err(); err != nil {
-		return Fault{Doing: "forgetting " + subject, Err: err}
+	if err := invalidateScript.Run(ctx, store.client, []string{subjectKey(subject)}).Err(); err != nil {
+		return Fault{Op: "forgetting " + subject, Err: err}
 	}
 	return nil
 }
 
-// subjectKey is where the keys of what is known subjectKey one subject are listed.
+// subjectKey is where the keys of what is known about one subject are listed.
 func subjectKey(subject string) string { return "about:" + subject }
 
-// file keeps the value and lists it under its subject.
+// putScript keeps the value and lists it under its subject.
 //
 // The listing outlives the value on purpose: a member naming a key that has
 // already expired costs one deletion of nothing, and the alternative -- a
@@ -77,7 +77,7 @@ func subjectKey(subject string) string { return "about:" + subject }
 // A subject of "" is not listed. A value nothing will ever ask to have dropped
 // needs no listing, and an empty subject would otherwise collect every such
 // value in one growing set.
-var file = goredis.NewScript(`
+var putScript = goredis.NewScript(`
 local fresh = tonumber(ARGV[2])
 redis.call('SET', KEYS[1], ARGV[1], 'PX', fresh)
 if KEYS[2] ~= 'about:' then
@@ -87,13 +87,13 @@ end
 return 1
 `)
 
-// drop deletes every value listed about one subject, and the listing.
+// invalidateScript deletes every value listed about one subject, and the listing.
 //
 // In one script rather than a read followed by deletions, so a value written
 // while this was running is either kept whole or dropped whole: a page that
 // showed half of yesterday's answers and half of today's would be the worst of
 // both.
-var drop = goredis.NewScript(`
+var invalidateScript = goredis.NewScript(`
 local members = redis.call('SMEMBERS', KEYS[1])
 for at = 1, #members do
   redis.call('DEL', members[at])

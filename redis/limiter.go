@@ -12,13 +12,13 @@ import (
 	"github.com/mbauer83/effect-golang/effect/rate"
 )
 
-// Pace hands out turns to every instance of a program from one count.
-type Pace struct {
+// Limiter hands out turns to every instance of a program from one count.
+type Limiter struct {
 	client *goredis.Client
 }
 
-// NewPace is the limiter over a connection.
-func NewPace(client *goredis.Client) *Pace { return &Pace{client: client} }
+// NewLimiter is the limiter over a connection.
+func NewLimiter(client *goredis.Client) *Limiter { return &Limiter{client: client} }
 
 // Turn reserves the next turn under an allowance and says how long until it.
 //
@@ -37,7 +37,7 @@ func NewPace(client *goredis.Client) *Pace { return &Pace{client: client} }
 // The clock is the server's own, read inside the script, because one count
 // shared by four containers needs one clock: containers whose clocks differ by
 // a second would each believe a different state.
-func (limiter *Pace) Turn(
+func (limiter *Limiter) Turn(
 	ctx context.Context,
 	allowance rate.Allowance,
 	longest time.Duration,
@@ -45,26 +45,26 @@ func (limiter *Pace) Turn(
 	if !allowance.IsStated() {
 		return 0, rate.Fault{Allowance: allowance.Name, Err: rate.ErrUnstated}
 	}
-	answered, err := reserve.Run(ctx, limiter.client,
+	reply, err := reserveScript.Run(ctx, limiter.client,
 		[]string{"pace:" + allowance.Name},
 		allowance.Spacing().Milliseconds(),
 		allowance.Most,
 		ceilingOf(longest),
 	).Int64Slice()
 	if err != nil {
-		return 0, Fault{Doing: "taking a turn under " + allowance.Name, Err: err}
+		return 0, Fault{Op: "taking a turn under " + allowance.Name, Err: err}
 	}
-	if len(answered) != 2 {
+	if len(reply) != 2 {
 		return 0, Fault{
-			Doing: "taking a turn under " + allowance.Name,
-			Err:   errUnreadableTurn,
+			Op:  "taking a turn under " + allowance.Name,
+			Err: errUnreadableTurn,
 		}
 	}
-	waited := time.Duration(answered[0]) * time.Millisecond
-	if reserved := answered[1] == 1; !reserved {
-		return waited, rate.Fault{Allowance: allowance.Name, Err: rate.ErrLimitExceeded}
+	wait := time.Duration(reply[0]) * time.Millisecond
+	if reserved := reply[1] == 1; !reserved {
+		return wait, rate.Fault{Allowance: allowance.Name, Err: rate.ErrLimitExceeded}
 	}
-	return waited, nil
+	return wait, nil
 }
 
 // ceilingOf is a ceiling as the script takes one: milliseconds, and a negative
@@ -82,7 +82,7 @@ func ceilingOf(longest time.Duration) int64 {
 
 var errUnreadableTurn = errors.New("the pacing script answered with something other than a wait and whether it reserved")
 
-// reserve is the generic cell rate algorithm, which is what a rate limit that
+// reserveScript is the generic cell rate algorithm, which is what a rate limit that
 // must not be exceeded looks like written down.
 //
 // One number is kept per allowance: the moment the next request would arrive
@@ -95,7 +95,7 @@ var errUnreadableTurn = errors.New("the pacing script answered with something ot
 // The same algorithm as the in-process limiter in core, which is what makes
 // the two interchangeable: a program tested against one behaves the same
 // against the other, and the only difference is who else can see the number.
-var reserve = goredis.NewScript(`
+var reserveScript = goredis.NewScript(`
 local spacing = tonumber(ARGV[1])
 local burst   = tonumber(ARGV[2])
 local ceiling = tonumber(ARGV[3])

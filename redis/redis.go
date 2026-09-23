@@ -31,16 +31,16 @@ import (
 // to log and the less useful thing to act on. Both are available, because the
 // port's fault wraps this one.
 type Fault struct {
-	Doing string
-	Err   error
+	Op  string
+	Err error
 }
 
 func (fault Fault) Error() string {
-	said := "redis: " + fault.Doing
+	message := "redis: " + fault.Op
 	if fault.Err != nil {
-		said += ": " + fault.Err.Error()
+		message += ": " + fault.Err.Error()
 	}
-	return said
+	return message
 }
 
 func (fault Fault) Unwrap() error { return fault.Err }
@@ -71,8 +71,8 @@ func Connect[R any](
 			}
 			return client, nil
 		},
-		func(err error) Fault { return Fault{Doing: "connecting", Err: err} },
-	).WithName("reaching redis")
+		func(err error) Fault { return Fault{Op: "connect", Err: err} },
+	).WithName("redis connect")
 
 	return scope.AcquireRelease(acquire, disconnect[R])
 }
