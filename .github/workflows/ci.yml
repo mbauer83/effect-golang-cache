@@ -49,6 +49,11 @@ jobs:
       - name: Race
         run: go test -race -count=1 ./...
 
+      # Every Gen body rewritten into a FlatMap chain must behave exactly as
+      # written, so the suites run again on the rewritten source.
+      - name: Race, rewritten
+        run: go tool effectgo test -race -count=1 ./...
+
   # What this module is for is two Lua scripts, and the suite above runs them
   # on gopher-lua inside a fake. That fake is worth having -- it lets a test
   # hold the clock, which a rate measured in seconds otherwise makes it wait
