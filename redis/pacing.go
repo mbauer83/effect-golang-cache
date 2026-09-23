@@ -62,7 +62,7 @@ func (limiter *Pace) Turn(
 	}
 	waited := time.Duration(answered[0]) * time.Millisecond
 	if reserved := answered[1] == 1; !reserved {
-		return waited, rate.Fault{Allowance: allowance.Name, Err: rate.ErrQueued}
+		return waited, rate.Fault{Allowance: allowance.Name, Err: rate.ErrLimitExceeded}
 	}
 	return waited, nil
 }

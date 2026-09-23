@@ -24,15 +24,15 @@ func NewStore(client *goredis.Client) *Store { return &Store{client: client} }
 // A key that has expired and a key that was never written are one answer, which
 // is the only thing a cache can say about either: what it holds is what is
 // still worth having.
-func (store *Store) Get(ctx context.Context, key string) (cache.Cached, error) {
+func (store *Store) Get(ctx context.Context, key string) (cache.Lookup, error) {
 	entity, err := store.client.Get(ctx, key).Bytes()
 	if errors.Is(err, goredis.Nil) {
-		return cache.Cached{}, nil
+		return cache.Lookup{}, nil
 	}
 	if err != nil {
-		return cache.Cached{}, Fault{Doing: "reading " + key, Err: err}
+		return cache.Lookup{}, Fault{Doing: "reading " + key, Err: err}
 	}
-	return cache.Cached{Entity: entity, Found: true}, nil
+	return cache.Lookup{Entity: entity, Found: true}, nil
 }
 
 // Keep files a value for as long as it is worth keeping, and notes it among

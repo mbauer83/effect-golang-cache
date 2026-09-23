@@ -50,7 +50,7 @@ func advanceClock(server *miniredis.Miniredis, past time.Duration) {
 	server.SetTime(noon.Add(past))
 }
 
-func readBack(t *testing.T, store *redis.Store, key string) cache.Cached {
+func readBack(t *testing.T, store *redis.Store, key string) cache.Lookup {
 	t.Helper()
 	cached, err := store.Get(context.Background(), key)
 	if err != nil {
@@ -239,7 +239,7 @@ func TestATurnRefusedForBeingTooFarOffLeavesTheSharedCountAlone(t *testing.T) {
 
 	wait, err := limiter.Turn(context.Background(), threePerSecond(), time.Millisecond)
 
-	if !errors.Is(err, rate.ErrQueued) {
+	if !errors.Is(err, rate.ErrLimitExceeded) {
 		t.Fatalf("expected the turn refused as queued, got %v", err)
 	}
 	if wait != time.Second {
@@ -264,7 +264,7 @@ func TestSpeculativeReadingCannotStarveTheReadingSomebodyIsWaitingOn(t *testing.
 			t.Fatalf("expected the free burst served, got %v", err)
 		}
 	}
-	if _, err := limiter.Turn(context.Background(), threePerSecond(), speculative); !errors.Is(err, rate.ErrQueued) {
+	if _, err := limiter.Turn(context.Background(), threePerSecond(), speculative); !errors.Is(err, rate.ErrLimitExceeded) {
 		t.Fatalf("expected speculative work to yield past the burst, got %v", err)
 	}
 	if waited := timeOneTurn(t, limiter, threePerSecond()); waited != time.Second {

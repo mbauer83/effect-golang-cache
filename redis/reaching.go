@@ -72,7 +72,7 @@ func Connect[R any](
 			return client, nil
 		},
 		func(err error) Fault { return Fault{Doing: "connecting", Err: err} },
-	).Named("reaching redis")
+	).WithName("reaching redis")
 
 	return scope.AcquireRelease(acquire, disconnect[R])
 }
