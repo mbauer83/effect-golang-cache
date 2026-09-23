@@ -5,16 +5,16 @@ The Redis and Valkey adapter for the two ports in
 a program reaches for when it reads something expensive.
 
 ```go
-redis.Reaching[R](scope, options)   // Effect[R, redis.Fault, *goredis.Client]
-redis.Keeping(client)               // *Store, a cache.Store
-redis.Pacing(client)                // *Pace, a rate.Limiter
+redis.Connect[R](scope, options)    // Effect[R, redis.Fault, *goredis.Client]
+redis.NewStore(client)              // *Store, a cache.Store
+redis.NewLimiter(client)            // *Limiter, a rate.Limiter
 ```
 
 ```go
 effect.Scoped(func(scope effect.Scope) effect.Effect[R, redis.Fault, A] {
-    return redis.Reaching[R](scope, &goredis.Options{Addr: "localhost:6379"}).
+    return redis.Connect[R](scope, &goredis.Options{Addr: "localhost:6379"}).
         FlatMap(func(client *goredis.Client) effect.Effect[R, redis.Fault, A] {
-            return reading(redis.Keeping(client), redis.Pacing(client))
+            return reading(redis.NewStore(client), redis.NewLimiter(client))
         })
 })
 ```
@@ -31,7 +31,7 @@ limit on the program, not on a process.
 
 ## The connection is a resource
 
-`Reaching` is scoped, because a client owns connections it has to give back —
+`Connect` is scoped, because a client owns connections it has to give back —
 the same division `sql.Open` makes for the same reason: a handle with a `Close`
 is a resource, and a resource belongs to a lifetime rather than to whoever
 happened to make it.
@@ -47,7 +47,7 @@ Reading, deciding and writing cannot be three commands when another instance is
 doing the same thing between them. So each operation that has to be atomic is
 one script.
 
-**Keeping** writes the value and lists it under its subject in one call, so
+**`Put`** writes the value and lists it under its subject in one call, so
 there is no moment at which a value is kept and not listed. A listing that
 missed it would be a value nobody could ask to have dropped, and whoever asked
 would keep being served yesterday's answer however often they asked. The
@@ -55,12 +55,12 @@ listing outlives the value on purpose: a member naming an expired key costs one
 deletion of nothing, and a listing that expired first would leave values
 nothing could find to drop.
 
-**Forgetting** reads the listing and deletes its members in one call, so a
+**`Invalidate`** reads the listing and deletes its members in one call, so a
 value written while it runs is either kept whole or dropped whole. A page
 showing half of yesterday's answers and half of today's would be the worst of
 both.
 
-**Reserving a turn** is the generic cell rate algorithm, the same one the
+**`Turn`** reserves by the generic cell rate algorithm, the same one the
 in-process limiter uses — which is what makes the two interchangeable: a
 program tested against one behaves the same against the other, and the only
 difference is who else can see the number.
@@ -89,10 +89,10 @@ The same protocol and the same scripting, served by this adapter unchanged.
 
 ## Deliberately absent
 
-**A cluster-aware pace.** The reservation is one key, so it lives on one node
+**A cluster-aware limiter.** The reservation is one key, so it lives on one node
 and is correct under Redis Cluster for that reason; a limiter sharded across
 nodes would be several counts again, which is the thing this exists to avoid.
 
-**Sentinel and cluster clients.** `goredis.Options` is what `Reaching` takes;
+**Sentinel and cluster clients.** `goredis.Options` is what `Connect` takes;
 a failover or cluster client is a different constructor in that library, and
 adding one here is a line when something asks for it.

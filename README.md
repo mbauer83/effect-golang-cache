@@ -16,10 +16,10 @@ naming their third parties only in tests.
 
 ```go
 effect.Scoped(func(scope effect.Scope) effect.Effect[R, redis.Fault, A] {
-    return redis.Reaching[R](scope, &goredis.Options{Addr: "localhost:6379"}).
+    return redis.Connect[R](scope, &goredis.Options{Addr: "localhost:6379"}).
         FlatMap(func(client *goredis.Client) effect.Effect[R, redis.Fault, A] {
-            keeping := redis.Keeping(client) // cache.Store
-            pacing := redis.Pacing(client)   // rate.Limiter
+            store := redis.NewStore(client)     // cache.Store
+            limiter := redis.NewLimiter(client) // rate.Limiter
             ...
         })
 })
