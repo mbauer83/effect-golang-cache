@@ -52,11 +52,11 @@ func (limiter *Limiter) Turn(
 		ceilingOf(longest),
 	).Int64Slice()
 	if err != nil {
-		return 0, Fault{Op: "taking a turn under " + allowance.Name, Err: err}
+		return 0, Fault{Op: "take a turn under " + allowance.Name, Err: err}
 	}
 	if len(reply) != 2 {
 		return 0, Fault{
-			Op:  "taking a turn under " + allowance.Name,
+			Op:  "take a turn under " + allowance.Name,
 			Err: errUnreadableTurn,
 		}
 	}
