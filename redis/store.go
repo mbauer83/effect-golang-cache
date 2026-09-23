@@ -30,7 +30,7 @@ func (store *Store) Get(ctx context.Context, key string) (cache.Lookup, error) {
 		return cache.Lookup{}, nil
 	}
 	if err != nil {
-		return cache.Lookup{}, Fault{Op: "read " + key, Err: err}
+		return cache.Lookup{}, Fault{Op: "get", Key: key, Err: err}
 	}
 	return cache.Lookup{Entity: entity, Found: true}, nil
 }
@@ -44,7 +44,7 @@ func (store *Store) Get(ctx context.Context, key string) (cache.Lookup, error) {
 // yesterday's answer however often they asked.
 func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 	if !entry.IsStorable() {
-		return Fault{Op: "put " + entry.Key, Err: cache.ErrUnworthy}
+		return Fault{Op: "put", Key: entry.Key, Err: cache.ErrUnworthy}
 	}
 	err := putScript.Run(ctx, store.client,
 		[]string{entry.Key, subjectKey(entry.About)},
@@ -52,7 +52,7 @@ func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 		entry.Fresh.Milliseconds(),
 	).Err()
 	if err != nil {
-		return Fault{Op: "put " + entry.Key, Err: err}
+		return Fault{Op: "put", Key: entry.Key, Err: err}
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func (store *Store) Put(ctx context.Context, entry cache.Entry) error {
 // Invalidate drops every entry about one subject, whatever wrote it.
 func (store *Store) Invalidate(ctx context.Context, subject string) error {
 	if err := invalidateScript.Run(ctx, store.client, []string{subjectKey(subject)}).Err(); err != nil {
-		return Fault{Op: "forget " + subject, Err: err}
+		return Fault{Op: "invalidate", Key: subject, Err: err}
 	}
 	return nil
 }

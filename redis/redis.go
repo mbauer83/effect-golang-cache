@@ -31,12 +31,18 @@ import (
 // to log and the less useful thing to act on. Both are available, because the
 // port's fault wraps this one.
 type Fault struct {
+	// Op is what was being done, and Key what it was done to, as the core's
+	// cache.Fault has them.
 	Op  string
+	Key string
 	Err error
 }
 
 func (fault Fault) Error() string {
 	message := "redis: " + fault.Op
+	if fault.Key != "" {
+		message += " " + fault.Key
+	}
 	if fault.Err != nil {
 		message += ": " + fault.Err.Error()
 	}

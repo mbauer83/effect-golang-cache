@@ -52,13 +52,10 @@ func (limiter *Limiter) Turn(
 		ceilingOf(longest),
 	).Int64Slice()
 	if err != nil {
-		return 0, Fault{Op: "take a turn under " + allowance.Name, Err: err}
+		return 0, Fault{Op: "take a turn", Key: allowance.Name, Err: err}
 	}
 	if len(reply) != 2 {
-		return 0, Fault{
-			Op:  "take a turn under " + allowance.Name,
-			Err: errUnreadableTurn,
-		}
+		return 0, Fault{Op: "take a turn", Key: allowance.Name, Err: errUnreadableTurn}
 	}
 	wait := time.Duration(reply[0]) * time.Millisecond
 	if reserved := reply[1] == 1; !reserved {
